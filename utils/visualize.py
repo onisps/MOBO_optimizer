@@ -10,6 +10,56 @@ import matplotlib as mpl
 from pymoo.visualization.scatter import Scatter
 from pymoo.decomposition.asf import ASF
 
+
+
+def plot_pareto_front_comparison(
+        analytical_data: np.ndarray,
+        optimization_data: pd.DataFrame,
+        objectives: list[str],
+        folder_path: str,
+        filename: str = 'pareto_front_comparison.png'
+):
+    """
+    Plots the Pareto front comparing analytical (theoretical) data with optimization results.
+
+    Args:
+        analytical_data (np.ndarray): Analytical Pareto front data (array with shape [n_samples, 2]).
+        optimization_data (pd.DataFrame): Optimization results DataFrame containing objective values.
+        objectives (list[str]): List containing names of two objectives.
+        folder_path (str): Directory to save the plot.
+        filename (str): Name of the file for the saved plot.
+
+    Returns:
+        None: Saves the Pareto front comparison plot to the specified folder.
+    """
+    plt.figure(figsize=(10, 7))
+    plt.scatter(
+        optimization_data[objectives[0]], 
+        optimization_data[objectives[1]],
+        label='Optimization Data',
+        color='blue',
+        alpha=0.6,
+        edgecolors='k'
+    )
+    plt.plot(
+        analytical_data[:, 0], 
+        analytical_data[:, 1],
+        label='Analytical Pareto Front',
+        color='red',
+        linewidth=2
+    )
+
+    plt.xlabel(objectives[0])
+    plt.ylabel(objectives[1])
+    plt.title('Comparison of Analytical and Optimization Pareto Fronts')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    
+    save_path = os.path.join(folder_path, filename)
+    plt.savefig(save_path)
+    plt.close()
+
 def plot_objective_minimization(
         history_df: pd.DataFrame,
         folder_path: str
