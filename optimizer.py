@@ -2,13 +2,19 @@ import numpy as np
 import pandas as pd
 import physbo
 import os
+import datetime
+import openpyxl
 from utils.visualize import (
-    create_pareto_front_plot,
     plot_objective_minimization,
-    plot_pareto_with_trade_off
+    plot_objective_convergence,
+    plot_objectives_vs_parameters,
+    plot_parallel_coordinates,
+    plot_best_objectives
 )
 
-# Class defining the black-box function
+# --------------------------
+# Black-box function class
+# --------------------------
 class BlackBoxFunction:
     def __init__(self, param_bounds, objectives):
         self.param_bounds = param_bounds
@@ -27,7 +33,9 @@ class BlackBoxFunction:
         obj2 = np.sum((X - 2)**2, axis=1)
         return np.vstack([obj1, obj2]).T
 
-# Parameters and objectives
+# --------------------------
+# Optimization Parameters
+# --------------------------
 parameters = {
     'param1': (-5, 5),
     'param2': (0, 10),
@@ -39,94 +47,82 @@ parameters = {
 objectives = ['objective1', 'objective2']
 blackbox = BlackBoxFunction(parameters, objectives)
 
-# Search space
 num_candidates = 2000
 X_scaled = np.random.rand(num_candidates, len(parameters))
 
-# Initialize PhysBO optimizer
+# --------------------------
+# PhysBO optimizer setup
+# --------------------------
 optimizer = physbo.search.discrete.policy(test_X=X_scaled)
 
-# Simulator using indices
 def simulator(indices):
     X = X_scaled[indices]
-    Y = blackbox.evaluate(X)
-    return Y[:, 0]  # optimize by first objective
+    return blackbox.evaluate(X)[:, 0]
 
-# Initial random sampling
 np.random.seed(0)
 initial_samples = 15
 optimizer.random_search(max_num_probes=initial_samples, simulator=simulator)
 
-# Bayesian optimization loop
 n_iter = 30
+start_time = datetime.datetime.now()
 for _ in range(n_iter):
     optimizer.bayes_search(max_num_probes=1, simulator=simulator, score='EI')
+elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
 
-# Best parameters
-best_sample_index = optimizer.history.fx.argmin()
-best_x_scaled = X_scaled[best_sample_index]
-best_x_original = blackbox.scale_parameters(best_x_scaled.reshape(1, -1))
-best_objective_values = blackbox.evaluate(best_x_scaled.reshape(1, -1))
+# --------------------------
+# Collect optimization results
+# --------------------------
+chosen_X_scaled = X_scaled[optimizer.history.chosen_actions]
+chosen_X = blackbox.scale_parameters(chosen_X_scaled)
+objectives_data = blackbox.evaluate(chosen_X_scaled)
 
-print("Optimal parameters:")
-for idx, key in enumerate(parameters.keys()):
-    print(f"{key}: {best_x_original[0, idx]}")
+history_df = pd.DataFrame(chosen_X, columns=parameters.keys())
+history_df[objectives] = objectives_data
+history_df['generation'] = np.arange(len(history_df))
 
-print("\nObjectives at optimum:")
-for idx, obj in enumerate(objectives):
-    print(f"{obj}: {best_objective_values[0, idx]}")
-
-# -----------------------
-# Prepare results for visualization
-# -----------------------
-
-# Creating a results directory
 results_dir = 'optimization_results'
 os.makedirs(results_dir, exist_ok=True)
 
-# Create a DataFrame for history data (parameters and objectives)
-history_df = pd.DataFrame(
-    blackbox.scale_parameters(X_scaled[optimizer.history.chosen_actions]),
-    columns=list(parameters.keys())
-)
+X_df = pd.DataFrame(chosen_X, columns=parameters.keys())
+F_df = pd.DataFrame(objectives_data, columns=objectives)
+G_df = pd.DataFrame(np.zeros((len(X_df), 0)))  # no constraints here, empty DataFrame
 
-# Adding objectives
-objectives_data = blackbox.evaluate(X_scaled[optimizer.history.chosen_actions])
-history_df[objectives] = objectives_data
-
-# Adding generation (iteration number)
-history_df['generation'] = np.arange(len(history_df))
-
-# Save history to CSV (for visualization functions)
+# Save CSV for visualization
 history_csv_path = os.path.join(results_dir, 'history.csv')
 history_df.to_csv(history_csv_path, index=False)
 
-# -----------------------
-# Visualization using provided module
-# -----------------------
+# --------------------------
+# Saving Function (adapted)
+# --------------------------
+def save_optimization_summary(
+    type_of_run: str = None,
+    folder_path: str = None,
+    best_index: int = None,
+    elapsed_time: float = None,
+    F: pd.DataFrame = None,
+    X: pd.DataFrame = None,
+    G: pd.DataFrame = None,
+    history_df: pd.DataFrame = None,
+    termination_params: dict = None,
+    detailed_algo_params: dict = None
+):
+    base_folder = '/'.join(folder_path.split(os.path.sep)[:-1])
+    summary_file = os.path.join(base_folder, 'optimization_summary.xlsx')
 
-# Pareto front visualization
-plot_objective_minimization(
-    csv_path=history_csv_path,
-    data=history_df[objectives],
-    folder_path=results_dir,
-    objectives=objectives,
-    pymoo_problem='welded_beam'  # replace if needed
-)
+    if os.path.exists(summary_file):
+        workbook = openpyxl.load_workbook(summary_file)
+        worksheet = workbook.active
+    else:
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        headers = (["Timestamp", "Type of run", "Generation", "Best Index", "Elapsed Time"] +
+                   [f"F_{col}" for col in F.columns] +
+                   [f"X_{col}" for col in X.columns] +
+                   [f"G_{col}" for col in G.columns] +
+                   [f"Term_{key}" for key in termination_params] +
+                   list(detailed_algo_params.keys()) +
+                   ['Folder_path'])
+        worksheet.append(headers)
 
-# Objective minimization (convergence)
-plot_objective_minimization(
-    history_df=history_df,
-    folder_path=results_dir
-)
-
-# Pareto front with trade-off highlighted
-plot_pareto_with_trade_off(
-    history=history_df,
-    F=history_df[objectives],
-    objectives=objectives,
-    folder_path=results_dir,
-    weights='equal'  # or specify weights
-)
-
-print(f"\nVisualizations have been saved to: {results_dir}")
+    generation_number = history_df['generation'].max()
+    timestamp = datetime.datetime.now().
