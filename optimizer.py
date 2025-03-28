@@ -32,7 +32,7 @@ class BlackBoxFunction:
         obj2 = np.sum((X - 2) ** 2, axis=1)  # Минимизировать сумму квадратов относительно 2
 
         # Возвращает значения в виде DataFrame для удобства
-        return pd.DataFrame(np.vstack([obj1, obj2]).T, columns=self.objectives)
+        return np.vstack([obj1, obj2]).T
 
 
 if __name__ == '__main__':
@@ -59,15 +59,21 @@ if __name__ == '__main__':
     optimizer = physbo.search.discrete.policy(test_X=X_scaled)
 
     # Первоначальная случайная выборка
+    def simulator(indeces):
+        X = X_scaled[indeces]
+        Y = blackbox.evaluate(X)[:,0]
+        return Y
+
     np.random.seed(0)
     initial_samples = 15
-    optimizer.random_sampling(max_num_probes=initial_samples, simulator=lambda X: blackbox.evaluate(X).values[:, 0])
+    optimizer.random_search(max_num_probes=initial_samples,
+                            simulator=simulator)
 
     # Цикл байесовской оптимизации (используем первую целевую функцию для упрощения)
     n_iter = 30
     for i in range(n_iter):
         optimizer.bayes_search(max_num_probes=1,
-                               simulator=lambda X: blackbox.evaluate(X).values[:, 0],
+                               simulator=simulator,
                                score='EI')
 
     # Получение оптимального решения по первой целевой функции
