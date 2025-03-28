@@ -34,6 +34,44 @@ class BlackBoxFunction:
         # Возвращает значения в виде DataFrame для удобства
         return np.vstack([obj1, obj2]).T
 
+# --- Визуализация ---
+
+# 1. График сходимости оптимизации
+def plot_convergence(history):
+    plt.figure(figsize=(8, 5))
+    best_y = np.minimum.accumulate(history.fx)
+    plt.plot(best_y, '-o')
+    plt.xlabel('Итерация')
+    plt.ylabel('Лучшее значение целевой функции (objective1)')
+    plt.title('График сходимости оптимизации')
+    plt.grid(True)
+    plt.show()
+
+# 2. График Парето-фронта
+def plot_pareto_front(X_scaled, history, blackbox):
+    evaluated_X = X_scaled[history.chosen_actions]
+    objectives_values = blackbox.evaluate(evaluated_X)
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(objectives_values[:, 0], objectives_values[:, 1], c='blue', label='Решения')
+
+    plt.xlabel('Objective 1')
+    plt.ylabel('Objective 2')
+    plt.title('Парето-фронт (найденные решения)')
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+# 3. График компромиссов (Trade-off plot)
+def plot_trade_off(objectives_values):
+    plt.figure(figsize=(8, 6))
+    plt.plot(objectives_values[:, 0], objectives_values[:, 1], 'o-')
+    plt.xlabel('Objective 1')
+    plt.ylabel('Objective 2')
+    plt.title('График компромиссов между целями')
+    plt.grid(True)
+    plt.show()
+
 
 if __name__ == '__main__':
     # Задание диапазонов параметров
@@ -88,3 +126,12 @@ if __name__ == '__main__':
 
     print("\nЗначения целевых функций в оптимуме:")
     print(best_objective_values)
+    
+    # Вызов функций для визуализации
+    plot_convergence(optimizer.history)
+    
+    evaluated_X_scaled = X_scaled[optimizer.history.chosen_actions]
+    evaluated_objectives = blackbox.evaluate(evaluated_X_scaled)
+    
+    plot_pareto_front(X_scaled, optimizer.history, blackbox)
+    plot_trade_off(evaluated_objectives)
