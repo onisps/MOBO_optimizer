@@ -158,6 +158,15 @@ save_optimization_summary(
 # --------------------------
 # Visualization plots
 # --------------------------
+
+# Analytical Pareto front calculation
+def generate_analytical_pareto_front(num_points=50):
+    lambdas = np.linspace(0, 1, num_points)
+    f1 = 20 * (1 - lambdas)**2
+    f2 = 20 * lambdas**2
+    analytical_pareto = np.column_stack([f1, f2])
+    return analytical_pareto
+
 plot_objective_minimization(history_df, results_dir)
 
 plot_objective_convergence(history_df, objectives, results_dir)
@@ -167,5 +176,13 @@ plot_objectives_vs_parameters(X_df, F_df, results_dir)
 plot_parallel_coordinates(X_df, G_df, F_df, objectives, results_dir)
 
 plot_best_objectives(F_df, results_dir)
+
+analytical_pareto_data = generate_analytical_pareto_front()
+plot_pareto_front_comparison(
+    analytical_data=analytical_pareto_data,
+    optimization_data=F_df,
+    objectives=objectives,
+    folder_path=results_dir
+)
 
 print(f"Optimization and visualization completed successfully.\nResults saved to: {results_dir}")
