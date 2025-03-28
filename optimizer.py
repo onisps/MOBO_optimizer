@@ -4,7 +4,7 @@ import physbo
 import os
 import datetime
 import openpyxl
-from utils.visualize import (
+from visualize import (
     plot_objective_minimization,
     plot_objective_convergence,
     plot_objectives_vs_parameters,
@@ -125,4 +125,47 @@ def save_optimization_summary(
         worksheet.append(headers)
 
     generation_number = history_df['generation'].max()
-    timestamp = datetime.datetime.now().
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    best_F = F.iloc[best_index].tolist()
+    best_X = X.iloc[best_index].tolist()
+    best_G = G.iloc[best_index].tolist()
+
+    termination_values = list(termination_params.values())
+    detailed_algo_values = list(detailed_algo_params.values())
+
+    new_row = [timestamp, type_of_run, generation_number, best_index, elapsed_time] + \
+              best_F + best_X + best_G + termination_values + detailed_algo_values + [folder_path]
+
+    worksheet.append(new_row)
+    workbook.save(summary_file)
+
+# Call the saving function
+best_index = optimizer.history.fx.argmin()
+save_optimization_summary(
+    type_of_run='PhysBO',
+    folder_path=results_dir,
+    best_index=best_index,
+    elapsed_time=elapsed_time,
+    F=F_df,
+    X=X_df,
+    G=G_df,
+    history_df=history_df,
+    termination_params={'max_iter': n_iter},
+    detailed_algo_params={'method': 'PhysBO', 'criterion': 'EI'}
+)
+
+# --------------------------
+# Visualization plots
+# --------------------------
+plot_objective_minimization(history_df, results_dir)
+
+plot_objective_convergence(history_df, objectives, results_dir)
+
+plot_objectives_vs_parameters(X_df, F_df, results_dir)
+
+plot_parallel_coordinates(X_df, G_df, F_df, objectives, results_dir)
+
+plot_best_objectives(F_df, results_dir)
+
+print(f"Optimization and visualization completed successfully.\nResults saved to: {results_dir}")
