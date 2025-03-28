@@ -4,7 +4,7 @@ import physbo
 import os
 import datetime
 import openpyxl
-from visualize import (
+from utils.visualize import (
     plot_objective_minimization,
     plot_objective_convergence,
     plot_objectives_vs_parameters,
