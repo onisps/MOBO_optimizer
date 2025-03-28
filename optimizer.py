@@ -106,7 +106,7 @@ history_df.to_csv(history_csv_path, index=False)
 # -----------------------
 
 # Pareto front visualization
-create_pareto_front_plot(
+plot_objective_minimization(
     csv_path=history_csv_path,
     data=history_df[objectives],
     folder_path=results_dir,
