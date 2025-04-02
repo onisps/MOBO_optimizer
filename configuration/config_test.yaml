@@ -1,0 +1,22 @@
+parameters:
+  param1: [-10, -5]
+  param2: [5, 10]
+  param3: [0.1, 0.3]
+
+objectives:
+  - objective1
+  - objective2
+
+num_candidates: 500
+initial_samples: 100
+n_iter: 10
+batch_size: 10
+
+
+hydra:
+  run:
+    dir: .
+
+termination_parameters:
+  min_improvement: 1e-6
+  no_improvement_generations: 10
