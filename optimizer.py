@@ -2,9 +2,12 @@ import sys
 import os
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import physbo
+import pickle
 import datetime
 import hydra
+from matplotlib import pyplot as plt
 from omegaconf import DictConfig, OmegaConf
 from utils.visualize import (
     plot_objective_minimization,
@@ -32,9 +35,10 @@ class BlackBoxFunction:
         return X_original
     
     def evaluate(self, X_scaled):
-        X = self.scale_parameters(X_scaled)
-        obj1 = np.sum(X**2, axis=1)
-        obj2 = np.sum((X - 2)**2, axis=1)
+        x = self.scale_parameters(X_scaled)
+        n = x.shape[1]
+        obj1 = 1 - np.exp(-1 * np.sum((x - 1/np.sqrt(n)) ** 2, axis = 1))
+        obj2 = 1 - np.exp(-1 * np.sum((x + 1/np.sqrt(n)) ** 2, axis = 1))
         return np.vstack([obj1, obj2]).T
 
 
@@ -88,7 +92,67 @@ class Problem:
         return np.array([[result['objectives'][name]] for name in self.obj_names]).T
 
 
-@hydra.main(config_path="configuration", config_name="config", version_base=None)
+
+class PhysBOCallback:
+    def __init__(self, objectives, folder_path='./utils/logs/', interval_backup=10, interval_picture=2):
+        self.objectives = objectives
+        self.folder_path = folder_path
+        os.makedirs(self.folder_path, exist_ok=True)
+        self.interval_backup = interval_backup
+        self.interval_picture = interval_picture
+        self.min_values = []
+
+    def save_state(self, optimizer, generation):
+        filepath = os.path.join(self.folder_path, f'checkpoint_gen_{generation:03d}.pkl')
+        state = {
+            "chosen_actions": optimizer.history.chosen_actions,
+            "fx": optimizer.history.fx,
+            "generation": generation
+        }
+        with open(filepath, 'wb') as f:
+            pickle.dump(state, f)
+        print(f"[Callback] Saved state at generation {generation}")
+
+    def plot_convergence(self, generation):
+        fx_array = np.array(self.min_values)  # shape: (generations, n_objectives)
+        gens = np.arange(fx_array.shape[0])
+
+        sns.set(style="whitegrid")
+        num_objectives = fx_array.shape[1]
+        fig, axes = plt.subplots(1, num_objectives, figsize=(15, 5))
+
+        if num_objectives == 1:
+            axes = [axes]
+
+        for i, obj_name in enumerate(self.objectives):
+            y_values = fx_array[:, i]
+            sns.lineplot(x=gens, y=y_values, ax=axes[i],
+                         marker='o', color='b', label=f"Best {obj_name}")
+            if len(y_values) > 2:
+                axes[i].set_title(f"Convergence of {obj_name} | Δ={abs(y_values[-2] - y_values[-1]):.2e}")
+            else:
+                axes[i].set_title(f"Convergence of {obj_name}")
+            axes[i].set_xlabel("Generation")
+            axes[i].set_ylabel(obj_name)
+
+        fig.tight_layout()
+        plt.savefig(os.path.join(self.folder_path, 'intime_convergence.png'))
+        plt.close()
+        print(f"[Callback] Saved convergence plot at generation {generation}")
+
+    def notify(self, optimizer, generation):
+        # Compute min for each objective
+        fx_array = np.array(optimizer.history.fx)
+        current_min = fx_array.min(axis=0)
+        self.min_values.append(current_min)
+
+        if generation % self.interval_backup == 0:
+            self.save_state(optimizer, generation)
+
+        if generation % self.interval_picture == 0:
+            self.plot_convergence(generation)
+
+@hydra.main(config_path="configuration", config_name="config_test", version_base=None)
 def main(cfg:DictConfig) -> None:
     # print("loaded with hydra:")
     # print(OmegaConf.to_yaml(cfg))
@@ -115,26 +179,32 @@ def main(cfg:DictConfig) -> None:
     logger = setup_logger(basic_folder_path)
 
 
-    blackbox = Problem(parameters, objectives)
-    # blackbox = BlackBoxFunction(parameters, objectives)
+    # blackbox = Problem(parameters, objectives)
+    blackbox = BlackBoxFunction(parameters, objectives)
 
     X_scaled = np.random.rand(num_candidates, len(parameters))
 
     # --------------------------
     # PhysBO optimizer setup
     # --------------------------
-    optimizer = physbo.search.discrete.policy(test_X=X_scaled)
+
+    optimizer = physbo.search.discrete_multi.policy(test_X=X_scaled, num_objectives=len(objectives))
+    physbo.search.discrete_multi.policy.set_seed(seed=0)
 
     def simulator(indices):
         X = X_scaled[indices]
-        return blackbox.evaluate(X)[:, 0]
+        return blackbox.evaluate(X)
 
     np.random.seed(0)
     optimizer.random_search(max_num_probes=initial_samples, simulator=simulator)
 
+    # Setup callback
+    callback = PhysBOCallback(objectives=objectives, folder_path=basic_folder_path)
+
     start_time = datetime.datetime.now()
-    for _ in range(n_iter):
-        optimizer.bayes_search(max_num_probes=1, simulator=simulator, score='EI')
+    for i in range(1, n_iter + 1):
+        optimizer.bayes_search(max_num_probes=1, simulator=simulator)
+        callback.notify(optimizer, i)
     elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
 
     # --------------------------
@@ -142,11 +212,11 @@ def main(cfg:DictConfig) -> None:
     # --------------------------
     chosen_X_scaled = X_scaled[optimizer.history.chosen_actions]
     chosen_X = blackbox.scale_parameters(chosen_X_scaled)
-    objectives_data = blackbox.evaluate(chosen_X_scaled)
+    objectives_data = np.array(optimizer.history.fx)
 
     history_df = pd.DataFrame(chosen_X, columns=parameters.keys())
-    for objective, objective_data in zip(objectives, objectives_data.T):
-        history_df[objective] = objective_data
+    for i, objective in enumerate(objectives):
+        history_df[objective] = objectives_data[:,i]
     history_df['generation'] = np.arange(len(history_df))
 
     # results_dir = 'optimization_results'
