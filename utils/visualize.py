@@ -100,7 +100,7 @@ def plot_objective_convergence(
         folder_path: str
 ) -> None:
     """
-    Plots convergence of objectives over generations, with optional modes to visualize  best objective values.
+    Plots convergence of objectives over generations, with optional modes to visualize best objective values.
 
     Args:
         history_df (pd.DataFrame): DataFrame containing optimization history.
@@ -131,21 +131,25 @@ def plot_objective_convergence(
 
 
 def plot_objectives_vs_parameters(
-        X: pd.DataFrame,
-        F: pd.DataFrame,
+        history_df: pd.DataFrame,
+        parameters: [str],
+        objectives: [str],
         folder_path: str
 ) -> None:
     """
     Plots scatter plots of each objective against each parameter in subplots.
 
     Args:
-        X (pd.DataFrame): DataFrame containing parameter values.
-        F (pd.DataFrame): DataFrame containing objective values.
+        history_df (pd.DataFrame): DataFrame history of optimisation.
+        parameters (list string): List of parameters names.
+        objectives (list string): List of objectives names.
         folder_path (str): Directory path to save the plot.
 
     Returns:
         None: This function creates scatter plots and saves them to the specified file.
     """
+    X = history_df[parameters]
+    F = history_df[objectives]
     num_params = len(X.columns)
     num_objectives = len(F.columns)
 
@@ -259,26 +263,29 @@ def plot_parallel_coordinates(
     fig.write_html(plot_path)
 
 
+
 def plot_best_objectives(
         F: pd.DataFrame,
+        pareto_front: pd.DataFrame,
         folder_path: str,
         weights: list[float] or str = 'equal'
 ) -> None:
     """
-    Finds the best trade-off in a multi-objective optimization based on ASF and creates subplots
-    for each unique pair of objectives to visualize the best solutions.
+    Finds the best trade-off in multi-objective maximization based on a weighted Chebyshev norm
+    and creates subplots for each unique pair of objectives to visualize the best solution.
 
     Args:
-        F (pd.DataFrame): DataFrame containing the objective values.
-        weights (list[float] or str): A list of weights to assign to each objective, or 'equal' for equal weights. Defaults to 'equal'.
-        folder_path (str): The directory path to save the plots.
+        F (pd.DataFrame): DataFrame with objective values (to be maximized).
+        pareto_front (pd.DataFrame): DataFrame with pareto front.
+        folder_path (str): Directory to save plots.
+        weights (list[float] or str): Objective weights or 'equal'.
 
     Returns:
-        None: The function plots and saves scatter plots with highlighted best solutions.
+        None
     """
     num_objectives = F.shape[1]
 
-    if weights == 'equal':  # Determine weights based on the input
+    if weights == 'equal':
         weights = [1 / num_objectives] * num_objectives
     elif isinstance(weights, list) and len(weights) == num_objectives:
         if not np.isclose(sum(weights), 1):
@@ -286,19 +293,25 @@ def plot_best_objectives(
     else:
         raise ValueError("Weights must be either 'equal' or a list of correct length.")
 
-    # Normalize the objective values for ASF
-    approx_ideal = F.min(axis=0)
-    approx_nadir = F.max(axis=0)
-    nF = (F - approx_ideal) / (approx_nadir - approx_ideal)
-    decomp: ASF = ASF()
-    best_index = decomp.do(nF.to_numpy(), 1 / np.array(weights)).argmin()
+    weights = np.array(weights)
 
-    subplot_count = (num_objectives * (num_objectives - 1)) // 2  # Unique pairs of objectives
+    # Нормализуем цели от 0 до 1 (по каждому столбцу)
+    ideal = F.min(axis=0)  # минимум по каждому столбцу
+    nadir = F.max(axis=0)  # максимум по каждому столбцу
+    normalized_F = (F - ideal) / (nadir - ideal + 1e-8)
+
+    # Вычисляем "Chebyshev-like" метрику (взвешенное максимальное значение)
+    scores = (normalized_F / weights).max(axis=1)
+
+    best_index = scores.idxmax()  # Минимизируем по максимуму — наилучший компромисс
+
+    # Визуализация
+    subplot_count = (num_objectives * (num_objectives - 1)) // 2
     fig, axes = plt.subplots(1, subplot_count, figsize=(5 * subplot_count, 5))
     plot_idx = 0
 
     for i in range(num_objectives):
-        for j in range(i + 1, num_objectives):  # Only create unique pairs
+        for j in range(i + 1, num_objectives):
             ax = axes[plot_idx] if subplot_count > 1 else axes
             sns.scatterplot(
                 data=F,
@@ -311,23 +324,35 @@ def plot_best_objectives(
                 alpha=0.6
             )
             sns.scatterplot(
-                data=F.iloc[[best_index]],
+                data=F.loc[[best_index]],
                 x=F.columns[i],
                 y=F.columns[j],
-                label="Best point",
+                label="Best trade-off",
                 s=200,
                 marker="x",
                 color="red",
                 ax=ax
             )
-            ax.set_title(f"Objective ({F.columns[i]}) vs Objective ({F.columns[j]})")
+            sns.scatterplot(
+                data=pareto_front,
+                x=pareto_front.columns[i],
+                y=pareto_front.columns[j],
+                label="Pareto front",
+                s=30,
+                ax=ax,
+                color='orangered',
+                alpha=0.6
+            )
+            ax.set_title(f"{F.columns[i]} vs {F.columns[j]}")
             ax.set_xlabel(F.columns[i])
             ax.set_ylabel(F.columns[j])
             plot_idx += 1
 
     plt.tight_layout()
+    os.makedirs(folder_path, exist_ok=True)
     plt.savefig(os.path.join(folder_path, 'objective_space_subplots.png'))
     plt.close()
+
 
 def load_optimization_results(
         folder_path: str,

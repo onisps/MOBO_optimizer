@@ -8,40 +8,42 @@ import pickle
 import datetime
 import hydra
 from matplotlib import pyplot as plt
-from omegaconf import DictConfig, OmegaConf
-from utils.visualize import (
-    plot_objective_minimization,
-    plot_objective_convergence,
-    plot_objectives_vs_parameters,
-    plot_parallel_coordinates,
-    plot_best_objectives,
-    plot_pareto_front_comparison
-)
+from omegaconf import DictConfig
+
 from utils.project_utils import (setup_logger, cleanup_logger, create_results_folder, save_optimization_summary)
 from utils.global_variable import (set_problem_name, set_percent, set_cpus, set_base_name, set_s_lim, get_s_lim, set_id,
                                    set_dead_objects, set_mesh_step, set_valve_position, get_cpus, get_problem_name)
 from utils.problem import init_procedure, Procedure
 
+os.system('export HYDRA_FULL_ERROR=1')
+
 class BlackBoxFunction:
     def __init__(self, param_bounds, objectives):
         self.param_bounds = param_bounds
         self.objectives = objectives
-        
+
     def scale_parameters(self, X_scaled):
         X_original = np.zeros_like(X_scaled)
         for idx, key in enumerate(self.param_bounds.keys()):
             min_val, max_val = self.param_bounds[key]
             X_original[:, idx] = X_scaled[:, idx] * (max_val - min_val) + min_val
         return X_original
-    
+
     def evaluate(self, X_scaled):
-        x = self.scale_parameters(X_scaled)
-        n = x.shape[1]
-        obj1 = 1 - np.exp(-1 * np.sum((x - 1/np.sqrt(n)) ** 2, axis = 1))
-        obj2 = 1 - np.exp(-1 * np.sum((x + 1/np.sqrt(n)) ** 2, axis = 1))
-        return np.vstack([obj1, obj2]).T
+        # if X_scaled.ndim != 2:
+        #     raise ValueError(f"Expected 2D array, got shape {X_scaled.shape}")
 
+        X = self.scale_parameters(X_scaled)
+        obj1 = -np.sum((X / 2) ** 2, axis=1)
+        obj2 = -np.sum((X / 3 - 2) ** 2, axis=1)
+        obj3 = -np.sum((X / 12 + 2) ** 1/3, axis=1)
+        # print(f"[BBF eval] X_scaled range: {X_scaled.min():.4f}, {X_scaled.max():.4f} | X range: {X.min():.4f}, {X.max():.4f}" )
+        output = np.vstack([obj1, obj2, obj3]).T
 
+        # Debugging info
+        # print(f"[Evaluate] Evaluated {X.shape[0]} samples. Output shape: {output.shape}")
+
+        return output
 
 class Problem:
     problem = None
@@ -68,29 +70,23 @@ class Problem:
         parameters = np.array(x)
         if problem_name == 'leaflet_single':
             result = Procedure.run_procedure(self=self.problem, params=parameters)
-            objective_values = result['objectives']
-            objectives_dict = {
-                "1 - LMN_open": objective_values['1 - LMN_open'],
-                "LMN_open": objective_values['LMN_open'],
-                "LMN_closed": objective_values['LMN_closed'],
-                "Smax": objective_values['Smax']
-            }
-            # print(f'obj: {objectives_dict}')
-            constraint_values = result['constraints']
-            constraints_dict = {
-                "VMS-Smax": constraint_values['VMS-Smax']
-            }
-            # print(f'cons: {constraints_dict}')
         elif problem_name == 'leaflet_contact':
-            # result = Procedure.run_procedure(self=self.problem, params=parameters)
-            result =    {'objectives': {'1 - LMN_open': np.random.rand(),
-               'LMN_open':  np.random.rand(),
-               'LMN_closed': np.random.rand(),
-               'Smax - Slim': get_s_lim() - np.random.rand()*5,
-               'HELI': np.random.rand()},
-              'constraints': {'VMS-Smax': get_s_lim() - 3*np.random.rand()}}
-        return np.array([[result['objectives'][name]] for name in self.obj_names]).T
+            result = Procedure.run_procedure(self=self.problem, params=parameters)
+            # result =    {
+            #     'objectives': {
+            #         'LMN_open':  np.random.rand(),
+            #         '-LMN_closed': np.random.rand(),
+            #         'Smax - Slim': np.random.rand()*5 - get_s_lim(),
+            #         '-HELI': np.random.rand()
+            #     },
+            #     'constraints': {
+            #         'VMS-Smax': get_s_lim() - 3*np.random.rand()
+            #     }
+            # }
 
+        out = np.array([[result['objectives'][name]] for name in self.obj_names]).T
+        # print(f"[Evaluate] shape: {out.shape} > {out}")
+        return out
 
 
 class PhysBOCallback:
@@ -105,8 +101,8 @@ class PhysBOCallback:
     def save_state(self, optimizer, generation):
         filepath = os.path.join(self.folder_path, f'checkpoint_gen_{generation:03d}.pkl')
         state = {
-            "chosen_actions": optimizer.history.chosen_actions,
-            "fx": optimizer.history.fx,
+            "chosen_actions": optimizer.chosen_actions,
+            "fx": optimizer.fx,
             "generation": generation
         }
         with open(filepath, 'wb') as f:
@@ -142,7 +138,7 @@ class PhysBOCallback:
 
     def notify(self, optimizer, generation):
         # Compute min for each objective
-        fx_array = np.array(optimizer.history.fx)
+        fx_array = np.array(optimizer.fx)
         current_min = fx_array.min(axis=0)
         self.min_values.append(current_min)
 
@@ -152,11 +148,9 @@ class PhysBOCallback:
         if generation % self.interval_picture == 0:
             self.plot_convergence(generation)
 
-@hydra.main(config_path="configuration", config_name="config_test", version_base=None)
+
+@hydra.main(config_path="configuration", config_name="config_leaf", version_base=None)
 def main(cfg:DictConfig) -> None:
-    # print("loaded with hydra:")
-    # print(OmegaConf.to_yaml(cfg))
-    print(cfg)
 
     parameters = {k: tuple(v) for k, v in cfg.parameters.items()}
     objectives = cfg.objectives
@@ -168,67 +162,131 @@ def main(cfg:DictConfig) -> None:
 
     num_candidates = cfg.num_candidates
     initial_samples = cfg.initial_samples
-    n_iter = cfg.n_iter
+    batch_size = cfg.batch_size
+    min_improvement = cfg.termination_parameters.min_improvement
+    no_improvement_generations = cfg.termination_parameters.no_improvement_generations
 
     basic_stdout = sys.stdout
     basic_stderr = sys.stderr
     basic_folder_path = create_results_folder(base_folder='results')
-    print(f"folder path > {basic_folder_path}")
 
     # logging
     logger = setup_logger(basic_folder_path)
 
 
-    # blackbox = Problem(parameters, objectives)
-    blackbox = BlackBoxFunction(parameters, objectives)
+    blackbox = Problem(parameters, objectives)
+    # blackbox = BlackBoxFunction(parameters, objectives)
 
+    np.random.seed(0)
     X_scaled = np.random.rand(num_candidates, len(parameters))
 
     # --------------------------
     # PhysBO optimizer setup
     # --------------------------
-
     optimizer = physbo.search.discrete_multi.policy(test_X=X_scaled, num_objectives=len(objectives))
-    physbo.search.discrete_multi.policy.set_seed(seed=0)
-
-    def simulator(indices):
-        X = X_scaled[indices]
-        return blackbox.evaluate(X)
-
-    np.random.seed(0)
-    optimizer.random_search(max_num_probes=initial_samples, simulator=simulator)
+    optimizer.set_seed(0)
 
     # Setup callback
     callback = PhysBOCallback(objectives=objectives, folder_path=basic_folder_path)
+    # simulator = Simulator(blackbox)
 
     start_time = datetime.datetime.now()
-    for i in range(1, n_iter + 1):
-        optimizer.bayes_search(max_num_probes=1, simulator=simulator)
-        callback.notify(optimizer, i)
-    elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
 
+    def simulator(indices):
+        X = X_scaled[indices]
+        # print(f"[simul] X_scaled range: {X_scaled.min():.4f}, {X_scaled.max():.4f}")
+        out = blackbox.evaluate(X)
+        print(f"[Simulator] shape: {out.shape} > {out}")
+        return out
+    optimizer.random_search(max_num_probes=initial_samples, simulator=simulator, is_disp=False)
+
+    # Bayesian search loop with robust termination criteria
+    pareto_front_history = []
+    generation = 0
+    best_objective = np.inf
+    print("[BayesOpt] Starting MOBO iterations...")
+    while True:
+        generation += 1
+        res = optimizer.bayes_search(
+            max_num_probes=initial_samples,
+            simulator=simulator,
+            num_search_each_probe=batch_size,
+            is_disp=False,
+            score='HVPI', # acquisition-функция для MOBO. Hypervolume-based Probability of Improvement
+            interval=0,  # переобучение гиперпараметров только в начале
+            num_rand_basis=0 # обычный GP (точнее, но медленнее)
+        )
+
+
+        # Check termination criteria
+        current_best = np.min(res.fx)
+        improvement = best_objective - current_best
+        callback.notify(res, generation)
+        Y_all = res.fx
+        # pareto_idx = res.pareto_set
+        pareto_Y = res.pareto.front
+
+        pareto_front_history.append(pareto_Y)
+        # Check improvement criterion
+        if improvement > min_improvement:
+            best_objective = current_best
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+            print(f'No improvement over {no_improve_count} generations.')
+
+        # Check no improvement criterion
+        if no_improve_count >= no_improvement_generations:
+            print(f"Termination: no improvement over {no_improvement_generations} generations.")
+            break
+        print(f"[Iter {generation}] Pareto front size: {len(pareto_Y)}")
+
+    elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
+    # Финальный фронт Парето
+    final_pareto = pareto_front_history[-1]
     # --------------------------
     # Collect optimization results
     # --------------------------
-    chosen_X_scaled = X_scaled[optimizer.history.chosen_actions]
+    chosen_indices = res.chosen_actions
+    chosen_X_scaled = X_scaled[chosen_indices]
     chosen_X = blackbox.scale_parameters(chosen_X_scaled)
-    objectives_data = np.array(optimizer.history.fx)
+    objectives_data = np.array(res.fx)
 
-    history_df = pd.DataFrame(chosen_X, columns=parameters.keys())
-    for i, objective in enumerate(objectives):
-        history_df[objective] = objectives_data[:,i]
-    history_df['generation'] = np.arange(len(history_df))
+    # Save to DataFrame
 
-    # results_dir = 'optimization_results'
-    os.makedirs(basic_folder_path, exist_ok=True)
+    # --- Create generation labels ---
+    generations = (
+            [0] * initial_samples +
+            sum([[i] * batch_size for i in range(1, generation)], [])
+    )
+    generations = generations[:len(res.chosen_actions)]
+
+    # Correct implementation to build DataFrame:
+    history_df = pd.DataFrame(
+        chosen_X[:len(generations)],
+        columns=parameters.keys()
+    )
+
+    # Correctly indexing objective values:
+    for i, obj in enumerate(objectives):
+        history_df[obj] = objectives_data[:len(generations), i]
+
+    history_df["generation"] = generations
+
 
     X_df = pd.DataFrame(chosen_X, columns=parameters.keys())
+    X_df.to_excel(os.path.join(basic_folder_path,'X.xlsx'))
+    X_df.to_csv(os.path.join(basic_folder_path,'X.csv'))
     F_df = pd.DataFrame(objectives_data, columns=objectives)
+    F_df.to_excel(os.path.join(basic_folder_path,'F.xlsx'))
+    F_df.to_csv(os.path.join(basic_folder_path,'F.csv'))
     G_df = pd.DataFrame(np.zeros((len(X_df), 0)))  # no constraints here, empty DataFrame
 
     # Save CSV for visualization
     history_csv_path = os.path.join(basic_folder_path, 'history.csv')
+    history_excel_path = os.path.join(basic_folder_path, 'history.xlsx')
     history_df.to_csv(history_csv_path, index=False)
+    history_df.to_excel(history_excel_path, index=False)
 
     # Call the saving function
     best_index = optimizer.history.fx.argmin()
@@ -241,39 +299,31 @@ def main(cfg:DictConfig) -> None:
         X=X_df,
         G=G_df,
         history_df=history_df,
-        termination_params={'max_iter': n_iter},
+        termination_params={'max_iter': generation},
         detailed_algo_params={'method': 'PhysBO', 'criterion': 'EI'}
     )
 
     # --------------------------
     # Visualization plots
     # --------------------------
-
-    # Analytical Pareto front calculation
-    def generate_analytical_pareto_front(num_points=50):
-        lambdas = np.linspace(0, 1, num_points)
-        f1 = 20 * (1 - lambdas) ** 2
-        f2 = 20 * lambdas ** 2
-        analytical_pareto = np.column_stack([f1, f2])
-        return analytical_pareto
+    from utils.visualize import (
+        plot_objective_minimization,
+        plot_objective_convergence,
+        plot_objectives_vs_parameters,
+        plot_parallel_coordinates,
+        plot_best_objectives,
+        plot_pareto_front_comparison
+    )
 
     plot_objective_minimization(history_df, basic_folder_path)
 
     plot_objective_convergence(history_df, objectives, basic_folder_path)
 
-    plot_objectives_vs_parameters(X_df, F_df, basic_folder_path)
+    plot_objectives_vs_parameters(history_df,parameters.keys(), objectives, basic_folder_path)
 
-    plot_parallel_coordinates(X_df, G_df, F_df, objectives, basic_folder_path)
+    plot_parallel_coordinates(history_df[parameters.keys()], G_df, history_df[objectives], objectives, basic_folder_path)
 
-    plot_best_objectives(F_df, basic_folder_path)
-
-    analytical_pareto_data = generate_analytical_pareto_front()
-    plot_pareto_front_comparison(
-        analytical_data=analytical_pareto_data,
-        optimization_data=F_df,
-        objectives=objectives,
-        folder_path=basic_folder_path
-    )
+    plot_best_objectives(history_df[objectives], pd.DataFrame(final_pareto, columns=objectives), basic_folder_path)
 
     print(f"Optimization and visualization completed successfully.\nResults saved to: {basic_folder_path}")
 

@@ -353,39 +353,31 @@ class Procedure:
                 del fixed_bc, partName, jobName, endPath, modelName, inpFileName
                 del tt1, tt2
 
+                # maximization problem
+                # maximize LMN_open
+                # minimize LMN_cl => maximize -LMN_cl
+                # minimize Slim - Smax => maximize Smax - Slim
+                # minimize heli => maximize -heli
                 objectives_dict = {
-                    '1 - LMN_open': 1 - LMN_op,
                     'LMN_open': LMN_op,
-                    "LMN_closed": LMN_cl,
+                    "-LMN_closed": -LMN_cl,
                     "Smax - Slim": Smax - get_s_lim(),
-                    'HELI': heli
+                    '-HELI': -heli
                 }
 
-                constraints_dict = {
-                    "VMS-Smax": VMS - get_s_lim()
-                }
 
-                return {"objectives": objectives_dict, "constraints": constraints_dict}
+                return {"objectives": objectives_dict}
             except Exception as exept:
                 log_message(f'Exception: {exept}')
 
                 objectives_dict = {
-                    'LMN_open': 0.0,
-                    '1 - LMN_open': 2.0,
-                    "LMN_closed": 2.0,
-                    "Smax - Slim": 5,
-                    'HELI': 3
+                    'LMN_open': -1.0,
+                    "-LMN_closed": -1.0,
+                    "Smax - Slim": -get_s_lim(),
+                    '-HELI': -3
                 }
 
-                constraints_dict = {
-                    "LMN_op_constr": 0.0,
-                    "1 - LMN_op_constr": 2.0,
-                    "LMN_cl_constr": 2.0,
-                    "Smax_constr": 50,
-                    "VMS-Smax": 50
-                }
-
-                return {"objectives": objectives_dict, "constraints": constraints_dict}
+                return {"objectives": objectives_dict}
 
         problem_name = get_problem_name().lower()
         if problem_name == 'leaflet_single':

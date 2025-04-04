@@ -2,15 +2,17 @@ parameters:
   param1: [-10, -5]
   param2: [5, 10]
   param3: [0.1, 0.3]
+  param4: [1, 3]
 
 objectives:
   - objective1
   - objective2
+  - objective3
 
-num_candidates: 500
-initial_samples: 100
+num_candidates: 200
+initial_samples: 50
 n_iter: 10
-batch_size: 10
+batch_size: 5
 
 
 hydra:
@@ -19,4 +21,4 @@ hydra:
 
 termination_parameters:
   min_improvement: 1e-6
-  no_improvement_generations: 10
+  no_improvement_generations: 5
