@@ -119,8 +119,4 @@ Developed by researchers focused on **simulation-based design of compliant struc
 
 ## 📄 License
 
-MIT License. Feel free to use, modify, and extend — just cite the work.
-
----
-
-Would you like to include example plots, a `.gif` of convergence, or auto-generate the `requirements.txt` as well?
+TBA
