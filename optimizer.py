@@ -9,13 +9,9 @@ import datetime
 import hydra
 from matplotlib import pyplot as plt
 from omegaconf import DictConfig
-
 from utils.project_utils import (setup_logger, cleanup_logger, create_results_folder, save_optimization_summary)
-from utils.global_variable import (set_problem_name, set_percent, set_cpus, set_base_name, set_s_lim, get_s_lim, set_id,
-                                   set_dead_objects, set_mesh_step, set_valve_position, get_cpus, get_problem_name)
-from utils.problem import init_procedure, Procedure
-
-os.system('export HYDRA_FULL_ERROR=1')
+from utils.global_variable import *
+from utils.problem import init_procedure, LeafletProblem
 
 class BlackBoxFunction:
     def __init__(self, param_bounds, objectives):
@@ -30,19 +26,11 @@ class BlackBoxFunction:
         return X_original
 
     def evaluate(self, X_scaled):
-        # if X_scaled.ndim != 2:
-        #     raise ValueError(f"Expected 2D array, got shape {X_scaled.shape}")
-
         X = self.scale_parameters(X_scaled)
         obj1 = -np.sum((X / 2) ** 2, axis=1)
         obj2 = -np.sum((X / 3 - 2) ** 2, axis=1)
         obj3 = -np.sum((X / 12 + 2) ** 1/3, axis=1)
-        # print(f"[BBF eval] X_scaled range: {X_scaled.min():.4f}, {X_scaled.max():.4f} | X range: {X.min():.4f}, {X.max():.4f}" )
         output = np.vstack([obj1, obj2, obj3]).T
-
-        # Debugging info
-        # print(f"[Evaluate] Evaluated {X.shape[0]} samples. Output shape: {output.shape}")
-
         return output
 
 class Problem:
@@ -69,23 +57,11 @@ class Problem:
         cpus = get_cpus()
         parameters = np.array(x)
         if problem_name == 'leaflet_single':
-            result = Procedure.run_procedure(self=self.problem, params=parameters)
+            result = LeafletProblem.run_procedure(self=self.problem, params=parameters)
         elif problem_name == 'leaflet_contact':
-            result = Procedure.run_procedure(self=self.problem, params=parameters)
-            # result =    {
-            #     'objectives': {
-            #         'LMN_open':  np.random.rand(),
-            #         '-LMN_closed': np.random.rand(),
-            #         'Smax - Slim': np.random.rand()*5 - get_s_lim(),
-            #         '-HELI': np.random.rand()
-            #     },
-            #     'constraints': {
-            #         'VMS-Smax': get_s_lim() - 3*np.random.rand()
-            #     }
-            # }
+            result = LeafletProblem.run_procedure(self=self.problem, params=parameters)
 
         out = np.array([[result['objectives'][name]] for name in self.obj_names]).T
-        # print(f"[Evaluate] shape: {out.shape} > {out}")
         return out
 
 
@@ -160,30 +136,39 @@ def main(cfg:DictConfig) -> None:
     print("\nObjectives:")
     print(objectives)
 
-    num_candidates = cfg.num_candidates
-    initial_samples = cfg.initial_samples
-    batch_size = cfg.batch_size
-    min_improvement = cfg.termination_parameters.min_improvement
-    no_improvement_generations = cfg.termination_parameters.no_improvement_generations
+    #parce config.yaml
+    num_candidates = cfg.optimizer.num_candidates
+    initial_samples = cfg.optimizer.initial_samples
+    batch_size = cfg.optimizer.batch_size
+    min_improvement = cfg.optimizer.termination_parameters.min_improvement
+    no_improvement_generations = cfg.optimizer.termination_parameters.no_improvement_generations
+
+    set_cpus(cfg.Abaqus.abq_cpus)
+    set_tangent_behavior(cfg.Abaqus.tangent_behavior)
+    set_normal_behavior(cfg.Abaqus.normal_behavior)
+
+    set_DIA(cfg.problem_definition.DIA)
+    set_Lift(cfg.problem_definition.Lift)
+    set_SEC(cfg.problem_definition.SEC)
+    set_EM(cfg.problem_definition.EM)
+    set_density(cfg.problem_definition.Dens)
+    set_material_name(cfg.problem_definition.material_name)
+    set_mesh_step(cfg.problem_definition.mesh_step)
+    set_valve_position(cfg.problem_definition.position)
+    set_problem_name(cfg.problem_definition.problem_name)
+    set_base_name(cfg.problem_definition.problem_name)
+    set_s_lim(cfg.problem_definition.s_lim)
 
     basic_stdout = sys.stdout
     basic_stderr = sys.stderr
     basic_folder_path = create_results_folder(base_folder='results')
-
-    # logging
     logger = setup_logger(basic_folder_path)
-
-
     blackbox = Problem(parameters, objectives)
-    # blackbox = BlackBoxFunction(parameters, objectives)
-
     np.random.seed(0)
-    X_scaled = np.random.rand(num_candidates, len(parameters))
+    x_unscaled = np.random.rand(num_candidates, len(parameters))
 
-    # --------------------------
     # PhysBO optimizer setup
-    # --------------------------
-    optimizer = physbo.search.discrete_multi.policy(test_X=X_scaled, num_objectives=len(objectives))
+    optimizer = physbo.search.discrete_multi.policy(test_X=x_unscaled, num_objectives=len(objectives))
     optimizer.set_seed(0)
 
     # Setup callback
@@ -193,11 +178,9 @@ def main(cfg:DictConfig) -> None:
     start_time = datetime.datetime.now()
 
     def simulator(indices):
-        X = X_scaled[indices]
-        # print(f"[simul] X_scaled range: {X_scaled.min():.4f}, {X_scaled.max():.4f}")
-        out = blackbox.evaluate(X)
-        print(f"[Simulator] shape: {out.shape} > {out}")
-        return out
+        x = x_unscaled[indices]
+        x_scaled = blackbox.evaluate(x)
+        return x_scaled
     optimizer.random_search(max_num_probes=initial_samples, simulator=simulator, is_disp=False)
 
     # Bayesian search loop with robust termination criteria
@@ -217,16 +200,13 @@ def main(cfg:DictConfig) -> None:
             num_rand_basis=0 # обычный GP (точнее, но медленнее)
         )
 
-
         # Check termination criteria
         current_best = np.min(res.fx)
         improvement = best_objective - current_best
         callback.notify(res, generation)
-        Y_all = res.fx
-        # pareto_idx = res.pareto_set
-        pareto_Y = res.pareto.front
+        pareto_y = res.pareto.front
+        pareto_front_history.append(pareto_y)
 
-        pareto_front_history.append(pareto_Y)
         # Check improvement criterion
         if improvement > min_improvement:
             best_objective = current_best
@@ -239,20 +219,16 @@ def main(cfg:DictConfig) -> None:
         if no_improve_count >= no_improvement_generations:
             print(f"Termination: no improvement over {no_improvement_generations} generations.")
             break
-        print(f"[Iter {generation}] Pareto front size: {len(pareto_Y)}")
+        print(f"[Iter {generation}] Pareto front size: {len(pareto_y)}")
 
     elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
-    # Финальный фронт Парето
     final_pareto = pareto_front_history[-1]
-    # --------------------------
-    # Collect optimization results
-    # --------------------------
-    chosen_indices = res.chosen_actions
-    chosen_X_scaled = X_scaled[chosen_indices]
-    chosen_X = blackbox.scale_parameters(chosen_X_scaled)
-    objectives_data = np.array(res.fx)
 
-    # Save to DataFrame
+    # Collect optimization results
+    chosen_indices = res.chosen_actions
+    chosen_x_scaled = x_unscaled[chosen_indices]
+    chosen_x = blackbox.scale_parameters(chosen_x_scaled)
+    objectives_data = np.array(res.fx)
 
     # --- Create generation labels ---
     generations = (
@@ -263,7 +239,7 @@ def main(cfg:DictConfig) -> None:
 
     # Correct implementation to build DataFrame:
     history_df = pd.DataFrame(
-        chosen_X[:len(generations)],
+        chosen_x[:len(generations)],
         columns=parameters.keys()
     )
 
@@ -274,9 +250,9 @@ def main(cfg:DictConfig) -> None:
     history_df["generation"] = generations
 
 
-    X_df = pd.DataFrame(chosen_X, columns=parameters.keys())
-    X_df.to_excel(os.path.join(basic_folder_path,'X.xlsx'))
-    X_df.to_csv(os.path.join(basic_folder_path,'X.csv'))
+    X_df = pd.DataFrame(chosen_x, columns=parameters.keys())
+    X_df.to_excel(os.path.join(basic_folder_path,'x.xlsx'))
+    X_df.to_csv(os.path.join(basic_folder_path,'x.csv'))
     F_df = pd.DataFrame(objectives_data, columns=objectives)
     F_df.to_excel(os.path.join(basic_folder_path,'F.xlsx'))
     F_df.to_csv(os.path.join(basic_folder_path,'F.csv'))
@@ -311,20 +287,14 @@ def main(cfg:DictConfig) -> None:
         plot_objective_convergence,
         plot_objectives_vs_parameters,
         plot_parallel_coordinates,
-        plot_best_objectives,
-        plot_pareto_front_comparison
+        plot_best_objectives
     )
 
     plot_objective_minimization(history_df, basic_folder_path)
-
     plot_objective_convergence(history_df, objectives, basic_folder_path)
-
     plot_objectives_vs_parameters(history_df,parameters.keys(), objectives, basic_folder_path)
-
     plot_parallel_coordinates(history_df[parameters.keys()], G_df, history_df[objectives], objectives, basic_folder_path)
-
     plot_best_objectives(history_df[objectives], pd.DataFrame(final_pareto, columns=objectives), basic_folder_path)
-
     print(f"Optimization and visualization completed successfully.\nResults saved to: {basic_folder_path}")
 
     cleanup_logger(logger)
@@ -333,15 +303,6 @@ def main(cfg:DictConfig) -> None:
     sys.stderr = basic_stderr
 
 if __name__ == '__main__':
-    set_mesh_step(0.4)
-    set_valve_position('mitr') # can be 'mitr'
-    problem_name = 'leaflet_contact'
-    set_problem_name(problem_name)
-    set_base_name('Mitral_test')
-    set_s_lim(3.23)  # Formlabs elastic 50A
-    set_cpus(3)  # 3 cpu cores shows better results then 8 cores. 260sec vs 531sec
-
-
     main()
 
 

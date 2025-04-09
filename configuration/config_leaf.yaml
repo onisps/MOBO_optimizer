@@ -12,15 +12,36 @@ objectives:
   - Smax - Slim
   - -HELI
 
-num_candidates: 100
-initial_samples: 50
-n_iter: 10
-batch_size: 1
+problem_definition:
+  name: Mitral_29mm
+  position: mitr
+  problem_name: leaflet_contact
+  s_lim: 3.23
+  DIA: 26
+  Lift: 0
+  SEC: 119
+  EM: 1.88
+  Dens: 1.02e-9
+  material_name: FormLabs Elasctic 50A
+  mesh_step: 0.4
+
+Abaqus:
+  abq_cpus: 3
+  tangent_behavior: 1
+  normal_behavior: 0.2
+
+
+optimizer:
+  num_candidates: 100
+  initial_samples: 50
+  n_iter: 10
+  batch_size: 1
+  termination_parameters:
+    min_improvement: 1e-3
+    no_improvement_generations: 5
 
 hydra:
   run:
     dir: .
 
-termination_parameters:
-  min_improvement: 1e-3
-  no_improvement_generations: 5
+

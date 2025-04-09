@@ -1,16 +1,10 @@
 import os
-from typing import Tuple, Optional, List, Dict
+from typing import Optional, List, Dict
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
-import matplotlib.colors as mcolors
-import matplotlib as mpl
-from pymoo.visualization.scatter import Scatter
-from pymoo.decomposition.asf import ASF
-
-
 
 def plot_pareto_front_comparison(
         analytical_data: np.ndarray,
